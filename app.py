@@ -204,6 +204,15 @@ def storage_read_text(storage_backend: str, target) -> str:
     return response["Body"].read().decode("utf-8")
 
 
+def read_csv_text(content: str, columns: Optional[list[str]] = None) -> pd.DataFrame:
+    if not content or not content.strip():
+        return pd.DataFrame(columns=columns)
+    try:
+        return pd.read_csv(StringIO(content))
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=columns)
+
+
 def sanitize_filename(name: str) -> str:
     clean = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name.strip())
     return clean or "upload.xlsx"
@@ -220,7 +229,7 @@ def load_upload_log() -> pd.DataFrame:
     paths = get_storage_paths(storage_backend)
     if not storage_exists(storage_backend, paths["upload_log"]):
         return pd.DataFrame(columns=UPLOAD_LOG_COLUMNS)
-    log_df = pd.read_csv(StringIO(storage_read_text(storage_backend, paths["upload_log"])))
+    log_df = read_csv_text(storage_read_text(storage_backend, paths["upload_log"]), UPLOAD_LOG_COLUMNS)
     for col in UPLOAD_LOG_COLUMNS:
         if col not in log_df.columns:
             log_df[col] = pd.NA
@@ -246,7 +255,9 @@ def rebuild_master_data() -> pd.DataFrame:
             continue
         if not storage_exists(storage_backend, str(normalized_path)):
             continue
-        frame = pd.read_csv(StringIO(storage_read_text(storage_backend, str(normalized_path))))
+        frame = read_csv_text(storage_read_text(storage_backend, str(normalized_path)))
+        if frame.empty:
+            continue
         frame["source_import_key"] = row["import_key"]
         frame["source_file"] = row["original_name"]
         frame["source_sheet"] = row["sheet_name"]
@@ -268,7 +279,7 @@ def load_persisted_dataset() -> pd.DataFrame:
         ensure_storage_dirs()
     paths = get_storage_paths(storage_backend)
     if storage_exists(storage_backend, paths["master_data"]):
-        return pd.read_csv(StringIO(storage_read_text(storage_backend, paths["master_data"])))
+        return read_csv_text(storage_read_text(storage_backend, paths["master_data"]))
     return rebuild_master_data()
 
 
