@@ -1,5 +1,6 @@
 import math
 import os
+import re
 from datetime import datetime, timezone
 from io import StringIO
 from hashlib import sha256
@@ -62,6 +63,33 @@ COLUMN_ALIASES = {
     "free": "free",
     "showbatch": "show_batch",
     "tcp": "tcp",
+}
+
+MONTH_NAME_MAP = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
 }
 
 UPLOAD_LOG_COLUMNS = [
@@ -312,6 +340,48 @@ def parse_dates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def parse_month_label(label: object) -> Optional[pd.Timestamp]:
+    text = str(label).strip().lower().replace("’", "'")
+    text = re.sub(r"[_/]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+
+    match = re.fullmatch(r"([a-z]+)\s*[' ]?\s*(\d{2}|\d{4})", text)
+    if not match:
+        return None
+
+    month_key, year_text = match.groups()
+    month = MONTH_NAME_MAP.get(month_key)
+    if month is None:
+        return None
+
+    year = int(year_text)
+    if year < 100:
+        year += 2000
+
+    return pd.Timestamp(year=year, month=month, day=1)
+
+
+def expand_monthly_summary_sheet(df: pd.DataFrame) -> pd.DataFrame:
+    month_cols = [col for col in df.columns if parse_month_label(col) is not None]
+    if not month_cols:
+        return df
+
+    id_cols = [col for col in df.columns if col not in month_cols and str(col).strip().lower() != "total"]
+    if not id_cols:
+        return df
+
+    melted = df.melt(
+        id_vars=id_cols,
+        value_vars=month_cols,
+        var_name="report_month",
+        value_name="units",
+    )
+    melted["date"] = melted["report_month"].apply(parse_month_label)
+    melted = melted[melted["date"].notna()].copy()
+    melted["units"] = pd.to_numeric(melted["units"], errors="coerce").fillna(0)
+    return melted
+
+
 def load_excel_file(uploaded_file) -> Optional[pd.ExcelFile]:
     filename = str(getattr(uploaded_file, "name", "")).lower()
     if filename.endswith(".xlsx"):
@@ -343,6 +413,7 @@ def load_excel_file(uploaded_file) -> Optional[pd.ExcelFile]:
 
 def prepare_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     df = normalize_columns(df_raw)
+    df = expand_monthly_summary_sheet(df)
 
     for col in REQUIRED_COLUMNS:
         if col not in df.columns:
